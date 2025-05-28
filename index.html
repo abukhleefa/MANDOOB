@@ -85,14 +85,13 @@
       });
     });
 
-    async function getLatLngFromURL(url) {
-      const regex = /@(-?\d+\.\d+),(-?\d+\.\d+)/;
-      const match = url.match(regex);
-      if (match) {
-        return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
-      }
-      return null;
-    }
+   async function expandShortURL(shortUrl) {
+  const response = await fetch(`https://shortlink-resolver.onrender.com=${encodeURIComponent(shortUrl)}`);
+  if (!response.ok) throw new Error('فشل في تتبع الرابط المختصر');
+  const data = await response.json();
+  return data.resolvedUrl;
+}
+
 
     function calculateDistance(a, b) {
       const toRad = deg => deg * Math.PI / 180;
