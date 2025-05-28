@@ -1,254 +1,122 @@
-
 <!DOCTYPE html>
 <html lang="ar">
 <head>
   <meta charset="UTF-8">
-  <title>مسار حسب القرب</title>
+  <title>منظّم مسار خرائط جوجل</title>
   <style>
-    body { font-family: Arial; direction: rtl; padding: 20px; background: #f4f4f4; }
-    input, button, textarea, select { width: 100%; margin: 5px 0; padding: 10px; }
-    #result, #map, #mapRoute { margin-top: 20px; background: #fff; padding: 10px; border: 1px solid #ccc; }
-    #map, #mapRoute { height: 300px; display: none; }
+    #map {
+      height: 500px;
+      width: 100%;
+    }
+    textarea {
+      width: 100%;
+      height: 100px;
+    }
+    button {
+      padding: 10px;
+      font-size: 16px;
+    }
+    .loading {
+      color: green;
+      font-weight: bold;
+    }
   </style>
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyATWZuTJWIPaykO5yYfblGVxmAiMenefg8"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
-  <h2>أدخل روابط Google Maps (حتى 10 مواقع)</h2>
-
-  <div id="links">
-    <input type="text" placeholder="رابط 1">
-    <input type="text" placeholder="رابط 2">
-    <input type="text" placeholder="رابط 3">
-    <input type="text" placeholder="رابط 4">
-    <input type="text" placeholder="رابط 5">
-    <input type="text" placeholder="رابط 6">
-    <input type="text" placeholder="رابط 7">
-    <input type="text" placeholder="رابط 8">
-    <input type="text" placeholder="رابط 9">
-    <input type="text" placeholder="رابط 10">
-  </div>
-
-  <h3>نقطة البداية</h3>
-  <label><input type="radio" name="startOption" value="current" checked> موقعي الحالي (افتراضي)</label><br>
-  <label><input type="radio" name="startOption" value="manual"> موقع مخصص (رابط أو تحديد على الخريطة)</label><br>
-  <input type="text" id="manualStart" placeholder="رابط موقع البداية (اختياري)" disabled>
-  <button onclick="toggleMap()">تحديد على الخريطة</button>
+  <h2>منظّم مسار خرائط جوجل</h2>
+  <p>أدخل حتى 10 روابط مختصرة من خرائط Google (maps.app.goo.gl)</p>
+  <textarea id="linksInput"></textarea><br>
+  <button onclick="processLinks()">إنشاء المسار</button>
+  <p id="status"></p>
   <div id="map"></div>
 
-  <h3>وسيلة التنقل</h3>
-  <select id="travelMode">
-    <option value="DRIVING">🚗 قيادة</option>
-    <option value="WALKING">🚶‍♂️ مشي</option>
-    <option value="BICYCLING">🚴‍♀️ دراجة</option>
-  </select>
-
-  <h3>أو استورد من Excel:</h3>
-  <input type="file" id="excelFile" accept=".xlsx" />
-  <div id="excelStatus" style="color: green; font-weight: bold; margin-top: 10px;"></div>
-
-  <button onclick="startProcessing()">إنشاء المسار</button>
-  <div id="result"></div>
-  <div id="mapRoute"></div>
-
   <script>
-    let manualStartCoord = null;
-    let map, marker, routeMap, directionsRenderer;
+    let map;
+    let directionsService;
+    let directionsRenderer;
 
-    function toggleMap() {
-      const mapDiv = document.getElementById("map");
-      mapDiv.style.display = "block";
-      if (!map) {
-        map = new google.maps.Map(mapDiv, {
-          center: { lat: 24.7136, lng: 46.6753 },
-          zoom: 6
-        });
-        manualStartCoord = { lat: 24.7136, lng: 46.6753 };
-        marker = new google.maps.Marker({
-          position: manualStartCoord,
-          map: map,
-          draggable: true
-        });
-        marker.addListener("dragend", function (e) {
-          manualStartCoord = {
-            lat: e.latLng.lat(),
-            lng: e.latLng.lng()
-          };
-        });
-      }
-    }
+    async function expandShortURL(shortUrl) {
+      const response = await fetch(`https://shortlink-resolver.onrender.com/resolve?url=${encodeURIComponent(shortUrl)}`);
+      if (!response.ok) throw new Error('فشل في تتبع الرابط المختصر');
+      const data = await response.json();
+      const resolvedUrl = data.resolvedUrl;
 
-    document.querySelectorAll('input[name="startOption"]').forEach(r => {
-      r.addEventListener('change', () => {
-        const isManual = document.querySelector('input[name="startOption"]:checked').value === 'manual';
-        document.getElementById("manualStart").disabled = !isManual;
-      });
-    });
-
-   async function expandShortURL(shortUrl) {
-  const response = await fetch(`https://shortlink-resolver.onrender.com=${encodeURIComponent(shortUrl)}`);
-  if (!response.ok) throw new Error('فشل في تتبع الرابط المختصر');
-  const data = await response.json();
-  return data.resolvedUrl;
-}
-
-
-    function calculateDistance(a, b) {
-      const toRad = deg => deg * Math.PI / 180;
-      const R = 6371;
-      const dLat = toRad(b.lat - a.lat);
-      const dLng = toRad(b.lng - a.lng);
-      const lat1 = toRad(a.lat);
-      const lat2 = toRad(b.lat);
-      const a1 = Math.sin(dLat / 2) ** 2 +
-                Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
-      const c = 2 * Math.atan2(Math.sqrt(a1), Math.sqrt(1 - a1));
-      return R * c;
-    }
-
-    function saveInputs() {
-      const urls = Array.from(document.querySelectorAll("#links input")).map(i => i.value);
-      const manualStart = document.getElementById("manualStart").value;
-      const mode = document.getElementById("travelMode").value;
-      localStorage.setItem("urls", JSON.stringify(urls));
-      localStorage.setItem("manualStart", manualStart);
-      localStorage.setItem("travelMode", mode);
-    }
-
-    function loadInputs() {
-      const urls = JSON.parse(localStorage.getItem("urls") || "[]");
-      const manualStart = localStorage.getItem("manualStart") || "";
-      const mode = localStorage.getItem("travelMode") || "DRIVING";
-      const inputs = document.querySelectorAll("#links input");
-      inputs.forEach((input, i) => input.value = urls[i] || "");
-      document.getElementById("manualStart").value = manualStart;
-      document.getElementById("travelMode").value = mode;
-    }
-
-    document.querySelectorAll("#links input, #manualStart, #travelMode").forEach(el => {
-      el.addEventListener("input", saveInputs);
-    });
-
-    document.getElementById("excelFile").addEventListener("change", function (e) {
-      const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onload = function (e) {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: "array" });
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-
-        const urls = rows.flat().filter(cell => typeof cell === "string" && cell.includes("maps"));
-        const inputs = document.querySelectorAll("#links input");
-        inputs.forEach((input, i) => input.value = urls[i] || "");
-        saveInputs();
-
-        document.getElementById("excelStatus").innerText = "✅ تم تحميل الروابط من Excel بنجاح!";
-        setTimeout(() => {
-          document.getElementById("excelStatus").innerText = "";
-        }, 3000);
-      };
-      reader.readAsArrayBuffer(file);
-    });
-
-    async function startProcessing() {
-      const inputs = Array.from(document.querySelectorAll('#links input'));
-      const urls = inputs.map(input => input.value.trim()).filter(url => url);
-      const resultDiv = document.getElementById('result');
-      const startOption = document.querySelector('input[name="startOption"]:checked').value;
-      const travelMode = document.getElementById("travelMode").value;
-
-      if (urls.length < 2) {
-        alert("يرجى إدخال موقعين على الأقل.");
-        return;
+      const latlngMatch = resolvedUrl.match(/\/search\/([\d\.\-]+),([\d\.\-]+)/);
+      if (latlngMatch) {
+        return {
+          lat: parseFloat(latlngMatch[1]),
+          lng: parseFloat(latlngMatch[2]),
+          source: shortUrl
+        };
       }
 
-      resultDiv.innerText = "جارٍ معالجة الروابط...";
+      throw new Error('تعذر استخراج الإحداثيات من الرابط');
+    }
 
-      const locations = [];
-      for (let url of urls) {
-        const coords = await getLatLngFromURL(url);
-        if (coords) locations.push(coords);
-      }
+    async function processLinks() {
+      const input = document.getElementById("linksInput").value.trim();
+      const lines = input.split(/\n|\r|,/).map(l => l.trim()).filter(Boolean).slice(0, 10);
+      const status = document.getElementById("status");
+      status.textContent = "جاري معالجة الروابط...";
+      status.classList.add("loading");
 
-      if (locations.length < 2) {
-        resultDiv.innerText = "تعذر استخراج الإحداثيات من الروابط.";
-        return;
-      }
+      try {
+        const locations = [];
+        for (let link of lines) {
+          const point = await expandShortURL(link);
+          locations.push(point);
+        }
 
-      let origin = null;
-
-      if (startOption === 'current') {
-        await new Promise((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(pos => {
-            origin = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-            resolve();
-          }, err => {
-            resultDiv.innerText = "تعذر تحديد موقعك: " + err.message;
-            reject();
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(position => {
+            const origin = {
+              lat: position.coords.latitude,
+              lng: position.coords.longitude
+            };
+            drawRoute(origin, locations);
+          }, () => {
+            alert("تعذر الحصول على الموقع الحالي.");
           });
-        });
-      } else {
-        const link = document.getElementById("manualStart").value.trim();
-        if (link) {
-          origin = await getLatLngFromURL(link);
-          if (!origin) {
-            alert("تعذر استخراج الإحداثيات من رابط البداية.");
-            return;
-          }
-        } else if (manualStartCoord) {
-          origin = manualStartCoord;
         } else {
-          alert("يرجى تحديد موقع البداية بالرابط أو على الخريطة.");
-          return;
+          alert("المتصفح لا يدعم تحديد الموقع.");
         }
+      } catch (err) {
+        status.textContent = err.message;
+        status.classList.remove("loading");
       }
+    }
 
-      locations.sort((a, b) => calculateDistance(origin, a) - calculateDistance(origin, b));
-      const destination = locations[locations.length - 1];
-      const waypoints = locations.slice(0, -1).map(loc => ({ location: loc, stopover: true }));
+    function drawRoute(origin, waypointsList) {
+      if (!map) initMap();
+      const waypoints = waypointsList.map(p => ({ location: { lat: p.lat, lng: p.lng }, stopover: true }));
 
-      const directionsService = new google.maps.DirectionsService();
-      const request = {
+      directionsService.route({
         origin: origin,
-        destination: destination,
-        travelMode: travelMode,
-        waypoints: waypoints
-      };
-
-      directionsService.route(request, function(result, status) {
-        if (status === 'OK') {
-          const mapDiv = document.getElementById('mapRoute');
-          mapDiv.style.display = 'block';
-          if (!routeMap) {
-            routeMap = new google.maps.Map(mapDiv, { zoom: 6, center: origin });
-            directionsRenderer = new google.maps.DirectionsRenderer({ map: routeMap });
-          }
+        destination: waypoints[waypoints.length - 1].location,
+        waypoints: waypoints.slice(0, -1),
+        optimizeWaypoints: true,
+        travelMode: google.maps.TravelMode.DRIVING
+      }, (result, status) => {
+        if (status === google.maps.DirectionsStatus.OK) {
           directionsRenderer.setDirections(result);
-
-          const originStr = `${origin.lat},${origin.lng}`;
-          const destinationStr = `${destination.lat},${destination.lng}`;
-          const waypointsStr = locations.slice(1, -1).map(loc => `${loc.lat},${loc.lng}`).join("|");
-
-          const mapLink = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destinationStr}&travelmode=${travelMode.toLowerCase()}&waypoints=${waypointsStr}`;
-
-          resultDiv.innerHTML = `
-            <p><strong>تم إنشاء المسار!</strong></p>
-            <a href="${mapLink}" target="_blank">🔗 افتح المسار على Google Maps</a>
-            <br><br>
-            <textarea rows="3" style="width:100%;">${mapLink}</textarea>
-            <br><br>
-            <a href="https://wa.me/?text=${encodeURIComponent(mapLink)}" target="_blank">📤 مشاركة على WhatsApp</a>
-            <br>
-            <a href="mailto:?subject=المسار&body=${encodeURIComponent(mapLink)}">📧 مشاركة بالبريد الإلكتروني</a>
-          `;
+          document.getElementById("status").textContent = "تم إنشاء المسار بنجاح!";
         } else {
-          resultDiv.innerText = "تعذر إنشاء المسار. الحالة: " + status;
+          alert("فشل في إنشاء المسار: " + status);
         }
       });
     }
 
-    loadInputs();
+    function initMap() {
+      map = new google.maps.Map(document.getElementById("map"), {
+        center: { lat: 24.7136, lng: 46.6753 },
+        zoom: 8
+      });
+      directionsService = new google.maps.DirectionsService();
+      directionsRenderer = new google.maps.DirectionsRenderer({ map: map });
+    }
+  </script>
+  <script async defer
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyATWZuTJWIPaykO5yYfblGVxmAiMenefg8&callback=initMap">
   </script>
 </body>
 </html>
