@@ -2,120 +2,117 @@
 <html lang="ar">
 <head>
   <meta charset="UTF-8">
-  <title>منظّم مسار خرائط جوجل</title>
+  <title>منظّم المسار الجغرافي</title>
   <style>
-    #map {
-      height: 500px;
-      width: 100%;
-    }
-    textarea {
-      width: 100%;
-      height: 100px;
-    }
-    button {
-      padding: 10px;
-      font-size: 16px;
-    }
-    .loading {
-      color: green;
-      font-weight: bold;
-    }
+    body { font-family: Arial; direction: rtl; margin: 20px; }
+    textarea, input, button { width: 100%; margin: 10px 0; padding: 10px; font-size: 16px; }
+    #map { height: 500px; margin-top: 20px; }
   </style>
 </head>
 <body>
-  <h2>منظّم مسار خرائط جوجل</h2>
-  <p>أدخل حتى 10 روابط مختصرة من خرائط Google (maps.app.goo.gl)</p>
-  <textarea id="linksInput"></textarea><br>
+  <h2>منظّم المسار الجغرافي</h2>
+  <p>أدخل حتى 10 روابط من خرائط Google تحتوي على الإحداثيات (مثل <code>/search/24.45,54.34</code> أو <code>@24.45,54.34</code>):</p>
+  <textarea id="linksInput" rows="10" placeholder="ألصق الروابط هنا..."></textarea>
   <button onclick="processLinks()">إنشاء المسار</button>
-  <p id="status"></p>
   <div id="map"></div>
 
   <script>
-    let map;
-    let directionsService;
-    let directionsRenderer;
-
-    async function expandShortURL(shortUrl) {
-      const response = await fetch(`https://shortlink-resolver.onrender.com/resolve?url=${encodeURIComponent(shortUrl)}`);
-      if (!response.ok) throw new Error('فشل في تتبع الرابط المختصر');
-      const data = await response.json();
-      const resolvedUrl = data.resolvedUrl;
-
-      const latlngMatch = resolvedUrl.match(/\/search\/([\d\.\-]+),([\d\.\-]+)/);
-      if (latlngMatch) {
-        return {
-          lat: parseFloat(latlngMatch[1]),
-          lng: parseFloat(latlngMatch[2]),
-          source: shortUrl
-        };
-      }
-
-      throw new Error('تعذر استخراج الإحداثيات من الرابط');
-    }
-
-    async function processLinks() {
-      const input = document.getElementById("linksInput").value.trim();
-      const lines = input.split(/\n|\r|,/).map(l => l.trim()).filter(Boolean).slice(0, 10);
-      const status = document.getElementById("status");
-      status.textContent = "جاري معالجة الروابط...";
-      status.classList.add("loading");
-
-      try {
-        const locations = [];
-        for (let link of lines) {
-          const point = await expandShortURL(link);
-          locations.push(point);
-        }
-
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(position => {
-            const origin = {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude
-            };
-            drawRoute(origin, locations);
-          }, () => {
-            alert("تعذر الحصول على الموقع الحالي.");
-          });
-        } else {
-          alert("المتصفح لا يدعم تحديد الموقع.");
-        }
-      } catch (err) {
-        status.textContent = err.message;
-        status.classList.remove("loading");
-      }
-    }
-
-    function drawRoute(origin, waypointsList) {
-      if (!map) initMap();
-      const waypoints = waypointsList.map(p => ({ location: { lat: p.lat, lng: p.lng }, stopover: true }));
-
-      directionsService.route({
-        origin: origin,
-        destination: waypoints[waypoints.length - 1].location,
-        waypoints: waypoints.slice(0, -1),
-        optimizeWaypoints: true,
-        travelMode: google.maps.TravelMode.DRIVING
-      }, (result, status) => {
-        if (status === google.maps.DirectionsStatus.OK) {
-          directionsRenderer.setDirections(result);
-          document.getElementById("status").textContent = "تم إنشاء المسار بنجاح!";
-        } else {
-          alert("فشل في إنشاء المسار: " + status);
-        }
-      });
-    }
+    let map, directionsService, directionsRenderer;
 
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
-        center: { lat: 24.7136, lng: 46.6753 },
-        zoom: 8
+        center: { lat: 24.45, lng: 54.39 },
+        zoom: 10,
       });
       directionsService = new google.maps.DirectionsService();
       directionsRenderer = new google.maps.DirectionsRenderer({ map: map });
     }
+
+    function extractLatLngFromURL(url) {
+      let match;
+
+      // 1. /search/lat,lng
+      match = url.match(/\/search\/([\d.\-]+),([\d.\-]+)/);
+      if (match) return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+
+      // 2. @lat,lng
+      match = url.match(/@([\d.\-]+),([\d.\-]+)/);
+      if (match) return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+
+      // 3. ?q=lat,lng
+      match = url.match(/[?&]q=([\d.\-]+),([\d.\-]+)/);
+      if (match) return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+
+      return null;
+    }
+
+    async function processLinks() {
+      const input = document.getElementById("linksInput").value.trim();
+      const urls = input.split("\n").filter(line => line.trim() !== "");
+
+      if (urls.length === 0) {
+        alert("يرجى إدخال روابط أولاً.");
+        return;
+      }
+
+      const coords = [];
+
+      for (const url of urls) {
+        const location = extractLatLngFromURL(url);
+        if (location) {
+          coords.push(location);
+        } else {
+          alert("تعذر استخراج الإحداثيات من الرابط:\n" + url);
+          return;
+        }
+      }
+
+      if (coords.length < 2) {
+        alert("يجب إدخال موقعين على الأقل.");
+        return;
+      }
+
+      // احصل على الموقع الحالي كنقطة انطلاق
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const origin = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+          createRoute(origin, coords);
+        },
+        () => {
+          alert("تعذر الحصول على الموقع الحالي.");
+        }
+      );
+    }
+
+    function createRoute(origin, waypointsCoords) {
+      const waypoints = waypointsCoords.slice(0, -1).map(coord => ({
+        location: coord,
+        stopover: true,
+      }));
+
+      directionsService.route(
+        {
+          origin: origin,
+          destination: waypointsCoords[waypointsCoords.length - 1],
+          waypoints: waypoints,
+          travelMode: google.maps.TravelMode.DRIVING,
+          optimizeWaypoints: true,
+        },
+        (response, status) => {
+          if (status === "OK") {
+            directionsRenderer.setDirections(response);
+          } else {
+            alert("فشل في إنشاء المسار: " + status);
+          }
+        }
+      );
+    }
   </script>
-  <script async defer
+
+  <script async
     src="https://maps.googleapis.com/maps/api/js?key=AIzaSyATWZuTJWIPaykO5yYfblGVxmAiMenefg8&callback=initMap">
   </script>
 </body>
